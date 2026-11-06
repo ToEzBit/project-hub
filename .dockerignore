@@ -1,0 +1,6 @@
+node_modules
+.next
+.git
+deploy
+*.log
+data/db.json

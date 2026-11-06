@@ -1,0 +1,60 @@
+# Project Hub on Docker — `restart: unless-stopped` brings it back after a
+# reboot, matching the mission-control convention on this box.
+#
+# This app has no host-monitoring duties, so (unlike mission-control) it does
+# NOT use network_mode: host. Instead the tailnet IP is bound explicitly in
+# the port mapping, which keeps it off home WiFi without needing host
+# networking or any of the /proc, D-Bus or NVIDIA host mounts mission-control
+# requires.
+services:
+  project-hub:
+    build: .
+    image: project-hub:latest
+    container_name: project-hub
+    restart: unless-stopped
+    user: "1000:1000"
+
+    environment:
+      PH_PORT: "3001"
+      PH_DATA_DIR: /app/data
+
+    # Binds only the tailnet IP:port on the host side — reachable from any
+    # machine on the tailnet, never from home WiFi/LAN. Do NOT change the
+    # host side to 0.0.0.0:3001.
+    ports:
+      - "100.113.25.42:3001:3001"
+
+    volumes:
+      - ./data:/app/data
+      - /etc/localtime:/etc/localtime:ro
+
+    # Extra DNS alias on the compose network: the sidecar's hostname is
+    # "project-hub" (that becomes its tailnet machine name), which shadows
+    # this service's name in Docker DNS — so the serve proxy targets the
+    # unambiguous alias "ph-app" instead.
+    networks:
+      default:
+        aliases: [ph-app]
+
+  # Tailscale sidecar: joins the tailnet as its own machine "project-hub",
+  # giving the app a dedicated HTTPS domain
+  # (https://project-hub.<tailnet>.ts.net) with a real cert — no port numbers,
+  # reachable from any tailnet device. Proxies to the app over the compose
+  # network; the auth key lives in ~/.ts-env (chmod 600, never in this file).
+  ts-project-hub:
+    image: tailscale/tailscale:latest
+    container_name: ts-project-hub
+    hostname: project-hub
+    restart: unless-stopped
+    env_file:
+      - /home/toezbit/.ts-env
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+    volumes:
+      - ./ts-state:/var/lib/tailscale
+      - ./ts-serve.json:/config/serve.json:ro
+    depends_on:
+      - project-hub
